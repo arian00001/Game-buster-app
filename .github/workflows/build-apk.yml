@@ -1,46 +1,71 @@
 name: Build Dev Style APK
+
 on:
   push:
     branches: [main, master]
   pull_request:
   workflow_dispatch:
+
 permissions:
   contents: read
+
 concurrency:
   group: dev-style-android-${{ github.ref }}
   cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - name: Install and configure Android SDK
+
+      # Let the maintained setup action install SDK packages. Do not invoke
+      # sdkmanager manually or request the obsolete package named "tools".
+      - name: Set up Android SDK and install required packages
         uses: android-actions/setup-android@v3
-      - name: Diagnose SDK manager and install packages
+        with:
+          cmdline-tools-version: 'latest'
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          accept-android-sdk-licenses: true
+
+      - name: Verify Android SDK packages
         shell: bash
         run: |
           set -euo pipefail
-          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/.android/sdk}}"
-          echo "Android SDK root: $SDK_ROOT"
-          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
-          if [ -z "$SDKMANAGER" ]; then echo 'sdkmanager executable not found'; find "$SDK_ROOT" -maxdepth 4 -type f -name sdkmanager -print || true; exit 1; fi
-          echo "Using sdkmanager: $SDKMANAGER"
-          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null || true
-          "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
-          "$SDKMANAGER" --sdk_root="$SDK_ROOT" --list_installed
+          echo "ANDROID_HOME=${ANDROID_HOME:-not-set}"
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-not-set}"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -n "$SDK_ROOT" || { echo 'Android SDK root was not set by setup action'; exit 1; }
+          test -d "$SDK_ROOT/platform-tools" || { echo 'platform-tools missing'; exit 1; }
+          test -d "$SDK_ROOT/platforms/android-35" || { echo 'Android platform 35 missing'; exit 1; }
+          test -d "$SDK_ROOT/build-tools/35.0.0" || { echo 'Build Tools 35.0.0 missing'; exit 1; }
+          find "$SDK_ROOT/cmdline-tools" -maxdepth 3 -type f -name sdkmanager -print || true
+          echo 'Android SDK package verification passed.'
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
       - name: Build APKs
         run: gradle --no-daemon --stacktrace assembleDebug assembleRelease
+
       - name: Verify APK outputs
+        shell: bash
         run: |
+          set -euo pipefail
           test -s app/build/outputs/apk/debug/app-debug.apk
           test -s app/build/outputs/apk/release/app-release-unsigned.apk
+          ls -lh app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/release/app-release-unsigned.apk
+
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
