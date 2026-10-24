@@ -1,56 +1,47 @@
 name: Build Dev Style APK
-
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [main, master]
   pull_request:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
-  group: android-build-${{ github.ref }}
+  group: dev-style-android-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
-      - name: Checkout
+      - name: Checkout source
         uses: actions/checkout@v4
-
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
-
-      - name: Set up Android SDK
+          java-version: '17'
+      - name: Install and configure Android SDK
         uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
-
-      - name: Verify project files
+      - name: Diagnose SDK manager and install packages
+        shell: bash
         run: |
-          test -f app/src/main/AndroidManifest.xml
-          test -f app/src/main/java/com/devstyle/gamebooster/MainActivity.kt
-          test -f app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
-
-      - name: Build debug APK
-        run: gradle --no-daemon --stacktrace assembleDebug
-
-      - name: Build release APK
-        run: gradle --no-daemon --stacktrace assembleRelease
-
-      - name: Upload APKs
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/.android/sdk}}"
+          echo "Android SDK root: $SDK_ROOT"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
+          if [ -z "$SDKMANAGER" ]; then echo 'sdkmanager executable not found'; find "$SDK_ROOT" -maxdepth 4 -type f -name sdkmanager -print || true; exit 1; fi
+          echo "Using sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" --list_installed
+      - name: Build APKs
+        run: gradle --no-daemon --stacktrace assembleDebug assembleRelease
+      - name: Verify APK outputs
+        run: |
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          test -s app/build/outputs/apk/release/app-release-unsigned.apk
+      - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dev-style-apks
